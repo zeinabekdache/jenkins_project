@@ -1,0 +1,109 @@
+pipeline {
+    agent any
+    
+    environment {
+        VIRTUAL_ENV = "${WORKSPACE}/venv"
+        PATH = "${VIRTUAL_ENV}/bin:${PATH}"
+    }
+    
+    stages {
+        stage('Setup') {
+            steps {
+                script {
+                    sh '''
+                        python3 -m venv ${VIRTUAL_ENV}
+                        . ${VIRTUAL_ENV}/bin/activate
+                        python3 -m pip install --upgrade pip
+                        pip install -r requirements.txt
+                    '''
+                }
+            }
+        }
+        
+        stage('Lint') {
+            steps {
+                script {
+                    sh '''
+                        . ${VIRTUAL_ENV}/bin/activate
+                        flake8 app.py --max-line-length=100
+                        flake8 tests/test_app.py --max-line-length=100
+                    '''
+                }
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                script {
+                    sh '''
+                        . ${VIRTUAL_ENV}/bin/activate
+                        pytest tests/test_app.py -v
+                    '''
+                }
+            }
+        }
+        
+        stage('Coverage') {
+            steps {
+                script {
+                    sh '''
+                        . ${VIRTUAL_ENV}/bin/activate
+                        coverage run -m pytest
+                        coverage report
+                        coverage html
+                    '''
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'htmlcov/**'
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            steps {
+                script {
+                    sh '''
+                        . ${VIRTUAL_ENV}/bin/activate
+                        bandit -r app.py -f html -o bandit-report.html
+                    '''
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'bandit-report.html'
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                script {
+                    sh '''
+                        . ${VIRTUAL_ENV}/bin/activate
+                        mkdir -p deployment
+                        cp app.py deployment/
+                        cd deployment
+                        python3 app.py > output.log
+                        echo "Application deployed successfully at $(date)" >> output.log
+                    '''
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'deployment/**'
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            cleanWs(cleanWhenNotBuilt: false,
+                   deleteDirs: true,
+                   disableDeferredWipeout: true,
+                   notFailBuild: true)
+        }
+    }
+}
